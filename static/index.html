@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local Secure Vault</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script
+      defer
+      src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"
+    ></script>
+    <style>
+      /* Prevent easy saving on viewing container */
+      .no-save {
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+    </style>
+  </head>
+  <body
+    class="bg-slate-950 text-slate-100 min-h-screen flex flex-col items-center justify-center p-4"
+  >
+    <div
+      class="max-w-lg w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl"
+      x-data="vaultApp()"
+      x-init="initApp()"
+    >
+      <!-- Header -->
+      <div class="text-center mb-6">
+        <h1
+          class="text-2xl font-bold tracking-tight text-white flex items-center justify-center gap-2"
+        >
+          <span>💣</span> Photobomb & File Vault
+        </h1>
+        <p class="text-xs text-slate-400 mt-1">
+          Zero-knowledge encrypted temporary sharing
+        </p>
+      </div>
+
+      <!-- Mode: Upload -->
+      <div x-show="mode === 'upload'" class="space-y-4">
+        <div
+          class="border-2 border-dashed border-slate-700 rounded-xl p-6 text-center hover:border-indigo-500 transition cursor-pointer relative"
+          @dragover.prevent
+          @drop.prevent="handleDrop($event)"
+        >
+          <input
+            type="file"
+            class="absolute inset-0 opacity-0 cursor-pointer"
+            @change="file = $event.target.files[0]"
+          />
+          <div class="space-y-1">
+            <p
+              class="text-sm font-medium text-slate-300"
+              x-text="file ? file.name : 'Select or drag & drop a file'"
+            ></p>
+            <p
+              class="text-xs text-slate-500"
+              x-text="file ? (file.size / 1024).toFixed(1) + ' KB' : 'Encrypted with AES before saving'"
+            ></p>
+          </div>
+        </div>
+
+        <!-- Action Mode Switch -->
+        <div class="space-y-1 text-xs">
+          <label class="block text-slate-400">Delivery Style</label>
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              @click="viewMode = 'view_once'"
+              :class="viewMode === 'view_once' ? 'bg-amber-600 text-white font-bold' : 'bg-slate-800 text-slate-400'"
+              class="py-2 px-3 rounded-lg border border-slate-700 text-center transition"
+            >
+              👁️ View Once & Destroy
+            </button>
+            <button
+              type="button"
+              @click="viewMode = 'download'"
+              :class="viewMode === 'download' ? 'bg-indigo-600 text-white font-bold' : 'bg-slate-800 text-slate-400'"
+              class="py-2 px-3 rounded-lg border border-slate-700 text-center transition"
+            >
+              💾 Standard Download
+            </button>
+          </div>
+        </div>
+
+        <!-- Options Grid -->
+        <div class="grid grid-cols-2 gap-3 text-xs">
+          <!-- If View Once, show Seconds timer -->
+          <div x-show="viewMode === 'view_once'">
+            <label class="block text-slate-400 mb-1">Display Duration</label>
+            <select
+              x-model="viewDuration"
+              class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white"
+            >
+              <option value="5">5 Seconds</option>
+              <option value="10">10 Seconds</option>
+              <option value="15">15 Seconds</option>
+              <option value="30">30 Seconds</option>
+              <option value="60">60 Seconds</option>
+            </select>
+          </div>
+
+          <!-- If Download, show Max Downloads -->
+          <div x-show="viewMode === 'download'">
+            <label class="block text-slate-400 mb-1">Max Downloads</label>
+            <select
+              x-model="maxDownloads"
+              class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white"
+            >
+              <option value="1">1 (Burn on download)</option>
+              <option value="3">3 downloads</option>
+              <option value="5">5 downloads</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-slate-400 mb-1">Expiry Period</label>
+            <select
+              x-model="expiresIn"
+              class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white"
+            >
+              <option value="3600">1 Hour</option>
+              <option value="86400">24 Hours</option>
+              <option value="604800">7 Days</option>
+            </select>
+          </div>
+        </div>
+
+        <button
+          @click="uploadFile()"
+          :disabled="!file || uploading"
+          class="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg text-sm transition"
+        >
+          <span x-show="!uploading">Encrypt & Upload</span>
+          <span x-show="uploading">Encrypting...</span>
+        </button>
+
+        <!-- Share Link Alert -->
+        <div
+          x-show="shareLink"
+          class="mt-4 p-3 bg-slate-800 rounded-lg border border-slate-700 space-y-2"
+        >
+          <p class="text-xs text-green-400 font-medium">
+            ✓ Uploaded & Encrypted!
+          </p>
+          <p class="text-xs text-slate-400">
+            Share this link. Decryption key lives only in the URL hash (#) and
+            is never sent to the server.
+          </p>
+          <div class="flex items-center gap-2">
+            <input
+              type="text"
+              readonly
+              :value="shareLink"
+              class="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-slate-300 select-all font-mono"
+            />
+            <button
+              @click="navigator.clipboard.writeText(shareLink)"
+              class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-xs font-semibold"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mode: Claim Screen (Before Opening) -->
+      <div x-show="mode === 'claim'" class="space-y-4">
+        <div
+          class="p-4 bg-slate-800 rounded-xl border border-slate-700 text-center space-y-2"
+        >
+          <span
+            x-show="meta.view_mode === 'view_once'"
+            class="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-950 text-amber-300 border border-amber-800"
+          >
+            ⚠️ View-Once (Photobomb)
+          </span>
+          <h2
+            class="text-lg font-bold text-white mt-1"
+            x-text="meta.filename"
+          ></h2>
+          <p
+            class="text-xs text-slate-400"
+            x-text="'Size: ' + (meta.size / 1024).toFixed(1) + ' KB'"
+          ></p>
+          <p
+            x-show="meta.view_mode === 'view_once'"
+            class="text-xs text-red-400 font-medium mt-1"
+          >
+            Once unlocked, you will only have
+            <span
+              x-text="meta.view_duration"
+              class="font-bold underline"
+            ></span>
+            seconds before it vanishes permanently!
+          </p>
+        </div>
+
+        <button
+          @click="triggerAccess()"
+          :disabled="loading"
+          :class="meta.view_mode === 'view_once' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-green-600 hover:bg-green-500'"
+          class="w-full py-2.5 px-4 text-white font-medium rounded-lg text-sm transition"
+        >
+          <span
+            x-show="!loading"
+            x-text="meta.view_mode === 'view_once' ? 'Reveal Secret (Start Timer)' : 'Decrypt & Download'"
+          ></span>
+          <span x-show="loading">Decrypting payload...</span>
+        </button>
+      </div>
+
+      <!-- Mode: Live Ephemeral Viewer (Snapchat Style) -->
+      <div
+        x-show="mode === 'viewing'"
+        class="space-y-4 no-save"
+        @contextmenu.prevent
+      >
+        <!-- Timer bar -->
+        <div
+          class="flex items-center justify-between bg-red-950 border border-red-800 px-4 py-2 rounded-xl text-red-200"
+        >
+          <span class="text-xs font-semibold uppercase tracking-wider"
+            >Self-destructing in:</span
+          >
+          <span
+            class="text-xl font-mono font-bold"
+            x-text="secondsRemaining + 's'"
+          ></span>
+        </div>
+
+        <!-- Preview container -->
+        <div
+          class="border border-slate-700 rounded-xl p-3 bg-black flex items-center justify-center min-h-[220px] max-h-[420px] overflow-hidden select-none"
+        >
+          <template x-if="isImage">
+            <img
+              :src="mediaSrc"
+              class="max-h-[400px] object-contain rounded select-none pointer-events-none"
+            />
+          </template>
+          <template x-if="!isImage">
+            <pre
+              class="text-xs text-green-400 font-mono overflow-auto max-h-[380px] p-2 whitespace-pre-wrap"
+              x-text="textContent"
+            ></pre>
+          </template>
+        </div>
+        <p class="text-center text-xs text-slate-500">
+          Server copy is already wiped. Content cannot be re-fetched.
+        </p>
+      </div>
+
+      <!-- Mode: Destroyed state -->
+      <div x-show="mode === 'destroyed'" class="text-center py-8 space-y-3">
+        <div class="text-4xl">💥</div>
+        <h2 class="text-lg font-bold text-slate-200">
+          This content has vanished
+        </h2>
+        <p class="text-xs text-slate-400 max-w-xs mx-auto">
+          The viewing timer expired and the file was completely wiped from
+          memory and storage.
+        </p>
+        <button
+          @click="window.location.href = '/'"
+          class="mt-4 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-xs rounded-lg text-slate-300"
+        >
+          Upload Your Own Secret
+        </button>
+      </div>
+
+      <!-- Error message banner -->
+      <div
+        x-show="errorMsg"
+        class="mt-4 p-3 bg-red-950 border border-red-800 rounded-lg text-xs text-red-300"
+        x-text="errorMsg"
+      ></div>
+    </div>
+
+    <script>
+      function vaultApp() {
+        return {
+          mode: "upload",
+          file: null,
+          viewMode: "view_once", // default to view_once
+          viewDuration: 10,
+          maxDownloads: 1,
+          expiresIn: 86400,
+          uploading: false,
+          loading: false,
+          shareLink: "",
+          errorMsg: "",
+          meta: {
+            filename: "",
+            size: 0,
+            view_mode: "download",
+            view_duration: 10,
+          },
+          fileId: "",
+          key: "",
+
+          // Ephemeral Viewer state
+          mediaSrc: "",
+          textContent: "",
+          isImage: false,
+          secondsRemaining: 0,
+          timerInterval: null,
+
+          initApp() {
+            const hash = window.location.hash.substring(1);
+            const params = new URLSearchParams(window.location.search);
+            const fid = params.get("file");
+
+            if (fid && hash) {
+              this.mode = "claim";
+              this.fileId = fid;
+              this.key = hash;
+              this.fetchMeta();
+            }
+          },
+
+          handleDrop(e) {
+            if (e.dataTransfer.files.length)
+              this.file = e.dataTransfer.files[0];
+          },
+
+          async uploadFile() {
+            this.uploading = true;
+            this.errorMsg = "";
+            const formData = new FormData();
+            formData.append("file", this.file);
+            formData.append("view_mode", this.viewMode);
+            formData.append("view_duration", this.viewDuration);
+            formData.append("max_downloads", this.maxDownloads);
+            formData.append("expires_in_seconds", this.expiresIn);
+
+            try {
+              const res = await fetch("/api/upload", {
+                method: "POST",
+                body: formData,
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.detail || "Upload failed");
+
+              this.shareLink = `${window.location.origin}/?file=${data.file_id}#${data.key}`;
+            } catch (err) {
+              this.errorMsg = err.message;
+            } finally {
+              this.uploading = false;
+            }
+          },
+
+          async fetchMeta() {
+            try {
+              const res = await fetch(`/api/meta/${this.fileId}`);
+              const data = await res.json();
+              if (!res.ok)
+                throw new Error(
+                  data.detail ||
+                    "Content has already been viewed or destroyed.",
+                );
+              this.meta = data;
+            } catch (err) {
+              this.errorMsg = err.message;
+            }
+          },
+
+          async triggerAccess() {
+            this.loading = true;
+            this.errorMsg = "";
+            const formData = new FormData();
+            formData.append("key", this.key);
+
+            try {
+              const res = await fetch(`/api/download/${this.fileId}`, {
+                method: "POST",
+                body: formData,
+              });
+              if (!res.ok) {
+                const data = await res.json();
+                throw new Error(
+                  data.detail || "Decryption failed or file already wiped.",
+                );
+              }
+
+              const blob = await res.blob();
+
+              // If View-Once mode, display in-memory photobomb style
+              if (this.meta.view_mode === "view_once") {
+                const contentType = res.headers.get("content-type") || "";
+                this.isImage = contentType.startsWith("image/");
+
+                if (this.isImage) {
+                  this.mediaSrc = URL.createObjectURL(blob);
+                } else {
+                  this.textContent = await blob.text();
+                }
+
+                this.mode = "viewing";
+                this.startCountdown(this.meta.view_duration);
+              } else {
+                // Standard Download
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = downloadUrl;
+                a.download = this.meta.filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+              }
+            } catch (err) {
+              this.errorMsg = err.message;
+            } finally {
+              this.loading = false;
+            }
+          },
+
+          startCountdown(seconds) {
+            this.secondsRemaining = seconds;
+            this.timerInterval = setInterval(() => {
+              this.secondsRemaining--;
+              if (this.secondsRemaining <= 0) {
+                this.destroyClientMedia();
+              }
+            }, 1000);
+          },
+
+          destroyClientMedia() {
+            clearInterval(this.timerInterval);
+            if (this.mediaSrc) {
+              URL.revokeObjectURL(this.mediaSrc); // Clean browser memory allocation
+              this.mediaSrc = "";
+            }
+            this.textContent = "";
+            this.mode = "destroyed";
+          },
+        };
+      }
+    </script>
+  </body>
+</html>
